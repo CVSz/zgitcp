@@ -11,6 +11,7 @@
 # - JSON output mode for CI pipelines (--json)
 # - Self-check command for basic unit tests and health checks (self-check)
 # - Authentication helpers for GitHub and Gitea (token-based)
+# - Full automated setup for config + SSH server + GitHub/Gitea remote wiring
 # - Robust tea installer with arch detection, retries, and TEA_URL override
 # Author: CVSz (adapted)
 # License: MIT
@@ -327,6 +328,70 @@ EOF
   log_info "Gitea installed and started at http://localhost:3000"
 }
 
+install_ssh_server() {
+  if command_exists systemctl && systemctl is-active --quiet ssh; then
+    log_info "OpenSSH server already active"
+    return 0
+  fi
+  log_info "Installing and enabling OpenSSH server (requires sudo)..."
+  if command_exists apt-get; then
+    sudo apt update
+    sudo apt install -y openssh-server
+    sudo systemctl enable --now ssh
+    log_info "OpenSSH server installed and running"
+  else
+    log_error "Unsupported package manager. Install openssh-server manually."
+    return 1
+  fi
+}
+
+connect_host_remote() {
+  local remote_name="$1"
+  local remote_url="$2"
+  if [ -z "$remote_url" ]; then
+    log_warn "No URL provided for remote '$remote_name'; skipping"
+    return 0
+  fi
+  if ! check_git_repo; then
+    log_warn "Not in a git repository. Skipping remote '$remote_name' setup."
+    return 0
+  fi
+  if git remote get-url "$remote_name" >/dev/null 2>&1; then
+    git remote set-url "$remote_name" "$remote_url"
+    log_info "Updated remote '$remote_name' -> $remote_url"
+  else
+    git remote add "$remote_name" "$remote_url"
+    log_info "Added remote '$remote_name' -> $remote_url"
+  fi
+}
+
+full_automated_setup() {
+  local setup_remote setup_branch github_url gitea_url do_auth
+  setup_remote="${1:-$REMOTE}"
+  setup_branch="${2:-$BRANCH}"
+  github_url="${3:-}"
+  gitea_url="${4:-}"
+  do_auth="${5:-true}"
+
+  REMOTE="$setup_remote"
+  BRANCH="$setup_branch"
+  save_config
+  log_info "Default config updated: REMOTE=$REMOTE BRANCH=$BRANCH"
+
+  install_gh
+  install_tea
+  install_ssh_server
+
+  connect_host_remote "github" "$github_url"
+  connect_host_remote "gitea" "$gitea_url"
+
+  if [ "$do_auth" = "true" ]; then
+    gh_auth_token || true
+    gitea_auth_token || true
+  fi
+  log_info "Full automated setup completed"
+}
+
 # -------------------------
 # Release automation
 # -------------------------
@@ -538,7 +603,10 @@ Commands:
   bump [major|minor|patch]    Bump version
   changelog                   Generate changelog
   install gh|tea|gitea        Install tools or server (requires sudo)
+  install ssh                 Install and enable OpenSSH server
   auth gh|gitea               Authenticate using token (interactive)
+  setup-all [--remote NAME] [--branch NAME] [--github-url URL] [--gitea-url URL] [--skip-auth]
+                              Full automated config + installers + SSH + GitHub/Gitea remote setup
   autoheal                    Run autoheal
   self-check                  Run basic self-checks and unit tests
   config                      Edit config interactively
@@ -689,6 +757,7 @@ interactive_menu() {
 24  Authenticate GitHub
 25  Authenticate Gitea
 26  Self-check
+27  Full automated setup (config + SSH + GitHub/Gitea connect)
  0  Exit
 ========================================
 MENU
@@ -763,6 +832,14 @@ MENU
       24) gh_auth_token; pause ;;
       25) gitea_auth_token; pause ;;
       26) self_check; pause ;;
+      27)
+          read -rp "Default remote [${REMOTE}]: " setup_remote; setup_remote="${setup_remote:-$REMOTE}"
+          read -rp "Default branch [${BRANCH}]: " setup_branch; setup_branch="${setup_branch:-$BRANCH}"
+          read -rp "GitHub SSH/HTTPS URL (optional): " github_url
+          read -rp "Gitea SSH/HTTPS URL (optional): " gitea_url
+          if confirm "Run GitHub/Gitea auth prompts now?"; then do_auth=true; else do_auth=false; fi
+          full_automated_setup "$setup_remote" "$setup_branch" "$github_url" "$gitea_url" "$do_auth"
+          pause ;;
       0) log_info "Exiting."; exit 0 ;;
       *) log_error "Invalid option"; pause ;;
     esac
@@ -826,10 +903,39 @@ main() {
     package) cli_package "$@" ;;
     bump) check_git_repo || exit 1; bump_version "${1:-$BUMP_TYPE}" ;;
     changelog) check_git_repo || exit 1; generate_changelog ;;
-    install) if [ $# -lt 1 ]; then log_error "install gh|tea|gitea"; exit 1; fi
-             case "$1" in gh) install_gh ;; tea) install_tea ;; gitea) install_gitea_server ;; *) log_error "Unknown installer $1"; exit 1 ;; esac ;;
+    install) if [ $# -lt 1 ]; then log_error "install gh|tea|gitea|ssh"; exit 1; fi
+             case "$1" in gh) install_gh ;; tea) install_tea ;; gitea) install_gitea_server ;; ssh) install_ssh_server ;; *) log_error "Unknown installer $1"; exit 1 ;; esac ;;
     auth) if [ $# -lt 1 ]; then log_error "auth gh|gitea"; exit 1; fi
           case "$1" in gh) gh_auth_token ;; gitea) gitea_auth_token ;; *) log_error "Unknown auth target $1"; exit 1 ;; esac ;;
+    setup-all)
+      setup_remote="$REMOTE"
+      setup_branch="$BRANCH"
+      github_url=""
+      gitea_url=""
+      do_auth=true
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --remote)
+            if [ $# -lt 2 ]; then log_error "Missing value for --remote"; exit 1; fi
+            setup_remote="$2"; shift 2 ;;
+          --branch)
+            if [ $# -lt 2 ]; then log_error "Missing value for --branch"; exit 1; fi
+            setup_branch="$2"; shift 2 ;;
+          --github-url)
+            if [ $# -lt 2 ]; then log_error "Missing value for --github-url"; exit 1; fi
+            github_url="$2"; shift 2 ;;
+          --gitea-url)
+            if [ $# -lt 2 ]; then log_error "Missing value for --gitea-url"; exit 1; fi
+            gitea_url="$2"; shift 2 ;;
+          --skip-auth)
+            do_auth=false; shift ;;
+          *)
+            log_warn "Ignoring unknown setup-all option: $1"
+            shift ;;
+        esac
+      done
+      full_automated_setup "$setup_remote" "$setup_branch" "$github_url" "$gitea_url" "$do_auth"
+      ;;
     autoheal) autoheal ;;
     self-check) self_check ;;
     config) edit_config_interactive ;;

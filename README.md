@@ -75,6 +75,7 @@ A unified **Git + GitHub + Gitea** control panel script for day-to-day repositor
 - `zip`: required if you package artifacts in zip format.
 - `tar`: required for `tar.gz`/`tgz` packaging.
 - `sudo`, `curl`, `wget`, `apt-get`: used by installer flows.
+- `openssh-server`: installed automatically when running SSH server setup.
 
 ---
 
@@ -182,7 +183,9 @@ Example:
 ### Tooling and auth
 
 - `install gh|tea|gitea`
+- `install ssh`
 - `auth gh|gitea`
+- `setup-all [--remote NAME] [--branch NAME] [--github-url URL] [--gitea-url URL] [--skip-auth]`
 
 ### Maintenance and diagnostics
 
@@ -207,6 +210,27 @@ Running without arguments opens a full-screen interactive panel with options for
 - Config management
 - Authentication helpers
 - Autoheal and self-check
+- Full automated bootstrap: config defaults + `gh`/`tea` installers + OpenSSH server + remote wiring for GitHub/Gitea
+
+### Full automated setup (new)
+
+You can run a one-shot setup to prepare a machine for GitHub/Gitea workflows:
+
+```bash
+./git-control-panel.sh setup-all \
+  --remote origin \
+  --branch main \
+  --github-url git@github.com:your-org/your-repo.git \
+  --gitea-url git@gitea.example.com:your-org/your-repo.git
+```
+
+What it does:
+
+1. Saves default `REMOTE`/`BRANCH` into `~/.git-control.conf`.
+2. Installs GitHub CLI (`gh`) and Gitea CLI (`tea`) if missing.
+3. Installs and enables `openssh-server`.
+4. Adds/updates git remotes named `github` and `gitea` (when URLs are provided).
+5. Runs GitHub/Gitea token auth prompts unless `--skip-auth` is set.
 
 Use this mode for guided execution when you prefer prompts over CLI arguments.
 
