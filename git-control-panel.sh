@@ -556,10 +556,18 @@ cli_release() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --dry-run) DRY_RUN=true; shift ;;
-      --artifact|--format) artifact_fmt="$2"; shift 2 ;;
-      --name) artifact_name="$2"; shift 2 ;;
-      --paths) paths="$2"; shift 2 ;;
-      *) shift ;;
+      --artifact|--format)
+        if [ $# -lt 2 ]; then log_error "Missing value for $1"; return 1; fi
+        artifact_fmt="$2"; shift 2 ;;
+      --name)
+        if [ $# -lt 2 ]; then log_error "Missing value for --name"; return 1; fi
+        artifact_name="$2"; shift 2 ;;
+      --paths)
+        if [ $# -lt 2 ]; then log_error "Missing value for --paths"; return 1; fi
+        paths="$2"; shift 2 ;;
+      *)
+        log_warn "Ignoring unknown release option: $1"
+        shift ;;
     esac
   done
 
@@ -575,6 +583,7 @@ cli_release() {
     log_info "[dry-run] Would create artifact $artifact_name from paths: $paths"
     [ "$JSON_OUTPUT" = true ] && json_emit ok "dry-run artifact" tag "v$V" artifact "$artifact_name"
   else
+    local artifact
     artifact=$(create_artifact "$artifact_fmt" "$artifact_name" $paths) || { log_error "Artifact creation failed"; [ "$JSON_OUTPUT" = true ] && json_emit error "artifact_failed"; return 1; }
   fi
 
@@ -619,15 +628,29 @@ cli_package() {
   local fmt="" name="" paths="."
   while [ $# -gt 0 ]; do
     case "$1" in
-      --format) fmt="$2"; shift 2 ;;
-      --name) name="$2"; shift 2 ;;
-      --paths) paths="$2"; shift 2 ;;
+      --format)
+        if [ $# -lt 2 ]; then log_error "Missing value for --format"; return 1; fi
+        fmt="$2"; shift 2 ;;
+      --name)
+        if [ $# -lt 2 ]; then log_error "Missing value for --name"; return 1; fi
+        name="$2"; shift 2 ;;
+      --paths)
+        if [ $# -lt 2 ]; then log_error "Missing value for --paths"; return 1; fi
+        paths="$2"; shift 2 ;;
       --dry-run) DRY_RUN=true; shift ;;
-      *) shift ;;
+      *)
+        log_warn "Ignoring unknown package option: $1"
+        shift ;;
     esac
   done
   if [ -z "$fmt" ] || [ -z "$name" ]; then log_error "format and name required"; [ "$JSON_OUTPUT" = true ] && json_emit error "missing_args"; return 1; fi
-  if [ "$DRY_RUN" = true ]; then log_info "[dry-run] Would create $name from $paths"; [ "$JSON_OUTPUT" = true ] && json_emit ok "dry-run package" artifact "$name" paths "$paths"; else artifact=$(create_artifact "$fmt" "$name" $paths) && [ "$JSON_OUTPUT" = true ] && json_emit ok "created" artifact "$artifact"; fi
+  if [ "$DRY_RUN" = true ]; then
+    log_info "[dry-run] Would create $name from $paths"
+    [ "$JSON_OUTPUT" = true ] && json_emit ok "dry-run package" artifact "$name" paths "$paths"
+  else
+    local artifact
+    artifact=$(create_artifact "$fmt" "$name" $paths) && [ "$JSON_OUTPUT" = true ] && json_emit ok "created" artifact "$artifact"
+  fi
 }
 
 # -------------------------
@@ -782,9 +805,23 @@ main() {
              target="$1"; shift
              ARTFMT="zip"; ARTNAME=""; ARTPATHS="."
              while [ $# -gt 0 ]; do
-               case "$1" in --dry-run) DRY_RUN=true; shift ;; --artifact|--format) ARTFMT="$2"; shift 2 ;; --name) ARTNAME="$2"; shift 2 ;; --paths) ARTPATHS="$2"; shift 2 ;; *) shift ;; esac
+               case "$1" in
+                 --dry-run) DRY_RUN=true; shift ;;
+                 --artifact|--format)
+                   if [ $# -lt 2 ]; then log_error "Missing value for $1"; exit 1; fi
+                   ARTFMT="$2"; shift 2 ;;
+                 --name)
+                   if [ $# -lt 2 ]; then log_error "Missing value for --name"; exit 1; fi
+                   ARTNAME="$2"; shift 2 ;;
+                 --paths)
+                   if [ $# -lt 2 ]; then log_error "Missing value for --paths"; exit 1; fi
+                   ARTPATHS="$2"; shift 2 ;;
+                 *)
+                   log_warn "Ignoring unknown release option: $1"
+                   shift ;;
+               esac
              done
-             cli_release "$target" --dry-run --artifact "$ARTFMT" --name "$ARTNAME" --paths "$ARTPATHS"
+             cli_release "$target" --artifact "$ARTFMT" --name "$ARTNAME" --paths "$ARTPATHS"
              ;;
     package) cli_package "$@" ;;
     bump) check_git_repo || exit 1; bump_version "${1:-$BUMP_TYPE}" ;;
