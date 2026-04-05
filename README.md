@@ -46,6 +46,7 @@ A unified **Git + GitHub + Gitea** control panel script for day-to-day repositor
 - Perform authentication with token prompts for GitHub and Gitea.
 - Run `self-check` diagnostics.
 - Run an interactive menu for one-click operations.
+- Snapshot a full GitHub owner/org stack to local source folders (with optional archive).
 
 ---
 
@@ -186,6 +187,7 @@ Example:
 - `install ssh`
 - `auth gh|gitea`
 - `setup-all [--remote NAME] [--branch NAME] [--github-url URL] [--gitea-url URL] [--skip-auth]`
+- `stack-source --source URL_OR_OWNER [--repos "repo1 repo2"] [--output-dir DIR] [--archive]`
 
 ### Maintenance and diagnostics
 
@@ -195,6 +197,28 @@ Example:
 - `set-log-level <level>`
 - `set-ci-mode <true|false>`
 - `help`
+
+---
+
+
+### Stack source generation
+
+Use this when you want to pull an entire GitHub org/user stack as local source code.
+
+```bash
+./git-control-panel.sh stack-source --source https://github.com/spark --output-dir ./exports --archive
+```
+
+Notes:
+
+- For private organizations, authenticate first (`gh auth login`) and ensure your token can list repositories.
+- If repository discovery is blocked, provide repositories manually:
+
+```bash
+./git-control-panel.sh stack-source --source spark --repos "repo-a repo-b" --output-dir ./exports
+```
+
+The command writes `STACK_MANIFEST.txt` in the output directory and optionally creates a tarball archive.
 
 ---
 
