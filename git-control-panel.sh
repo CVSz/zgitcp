@@ -607,6 +607,8 @@ Commands:
   auth gh|gitea               Authenticate using token (interactive)
   setup-all [--remote NAME] [--branch NAME] [--github-url URL] [--gitea-url URL] [--skip-auth]
                               Full automated config + installers + SSH + GitHub/Gitea remote setup
+  stack-source --source URL_OR_OWNER [--repos "r1 r2"] [--output-dir DIR] [--archive]
+                              Clone a GitHub stack/org source snapshot locally
   autoheal                    Run autoheal
   self-check                  Run basic self-checks and unit tests
   config                      Edit config interactively
@@ -718,6 +720,133 @@ cli_package() {
   else
     local artifact
     artifact=$(create_artifact "$fmt" "$name" $paths) && [ "$JSON_OUTPUT" = true ] && json_emit ok "created" artifact "$artifact"
+  fi
+}
+
+
+extract_github_owner() {
+  local source_url="$1"
+  local owner=""
+
+  case "$source_url" in
+    https://github.com/*)
+      owner="${source_url#https://github.com/}"
+      owner="${owner%%/*}"
+      ;;
+    git@github.com:*)
+      owner="${source_url#git@github.com:}"
+      owner="${owner%%/*}"
+      ;;
+    *)
+      owner="$source_url"
+      ;;
+  esac
+
+  owner="${owner%.git}"
+  printf '%s\n' "$owner"
+}
+
+stack_generate_source() {
+  local source="" output_dir="stack-source" repos_arg="" make_archive=false
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --source)
+        if [ $# -lt 2 ]; then log_error "Missing value for --source"; return 1; fi
+        source="$2"; shift 2 ;;
+      --output-dir)
+        if [ $# -lt 2 ]; then log_error "Missing value for --output-dir"; return 1; fi
+        output_dir="$2"; shift 2 ;;
+      --repos)
+        if [ $# -lt 2 ]; then log_error "Missing value for --repos"; return 1; fi
+        repos_arg="$2"; shift 2 ;;
+      --archive)
+        make_archive=true; shift ;;
+      *)
+        log_warn "Ignoring unknown stack-source option: $1"
+        shift ;;
+    esac
+  done
+
+  if [ -z "$source" ]; then
+    log_error 'Usage: stack-source --source <github owner/url> [--repos "repo1 repo2"] [--output-dir DIR] [--archive]'
+    return 1
+  fi
+
+  local owner
+  owner="$(extract_github_owner "$source")"
+  if [ -z "$owner" ]; then
+    log_error "Unable to extract GitHub owner from source: $source"
+    return 1
+  fi
+
+  local -a repos=()
+  if [ -n "$repos_arg" ]; then
+    local old_ifs="$IFS"
+    IFS=' '
+    # shellcheck disable=SC2206
+    repos=($repos_arg)
+    IFS="$old_ifs"
+  elif command_exists gh; then
+    log_info "Discovering repositories for GitHub owner '$owner' via gh"
+    mapfile -t repos < <(gh repo list "$owner" --limit 200 --json name -q '.[].name' 2>/dev/null || true)
+  else
+    log_error 'No --repos provided and gh is not installed. Provide --repos "repo1 repo2" or install gh.'
+    return 1
+  fi
+
+  if [ ${#repos[@]} -eq 0 ]; then
+    log_error "No repositories found for '$owner'. If this is a private org/user, authenticate gh and retry."
+    return 1
+  fi
+
+  local target_root="$output_dir/$owner"
+  mkdir -p "$target_root"
+  local manifest="$output_dir/STACK_MANIFEST.txt"
+  : > "$manifest"
+
+  log_info "Generating source snapshot for $owner into $target_root"
+  for repo in "${repos[@]}"; do
+    [ -z "$repo" ] && continue
+    local repo_url="https://github.com/$owner/$repo.git"
+    local repo_target="$target_root/$repo"
+    if [ "$DRY_RUN" = true ]; then
+      log_info "[dry-run] Would clone $repo_url into $repo_target"
+      printf '%s\n' "$repo_url -> $repo_target (dry-run)" >> "$manifest"
+      continue
+    fi
+
+    if [ -d "$repo_target/.git" ]; then
+      log_info "Updating existing repository: $repo_target"
+      git -C "$repo_target" fetch --all --prune
+      git -C "$repo_target" pull --ff-only || log_warn "Fast-forward pull failed for $repo_target"
+    else
+      log_info "Cloning $repo_url"
+      git clone --depth 1 "$repo_url" "$repo_target"
+    fi
+    printf '%s\n' "$repo_url -> $repo_target" >> "$manifest"
+  done
+
+  local archive_path=""
+  if [ "$make_archive" = true ]; then
+    archive_path="$output_dir/${owner}-stack-source.tar.gz"
+    if [ "$DRY_RUN" = true ]; then
+      log_info "[dry-run] Would archive $target_root to $archive_path"
+    else
+      tar -czf "$archive_path" -C "$output_dir" "$owner" STACK_MANIFEST.txt
+      log_info "Archive created: $archive_path"
+    fi
+  fi
+
+  if [ "$JSON_OUTPUT" = true ]; then
+    json_emit ok "stack source generated" owner "$owner" repo_count "${#repos[@]}" output_dir "$target_root" manifest "$manifest" archive "$archive_path"
+  else
+    echo "Stack source generation complete."
+    echo "Owner: $owner"
+    echo "Repositories: ${#repos[@]}"
+    echo "Output: $target_root"
+    echo "Manifest: $manifest"
+    [ -n "$archive_path" ] && echo "Archive: $archive_path"
   fi
 }
 
@@ -936,6 +1065,7 @@ main() {
       done
       full_automated_setup "$setup_remote" "$setup_branch" "$github_url" "$gitea_url" "$do_auth"
       ;;
+    stack-source) stack_generate_source "$@" ;;
     autoheal) autoheal ;;
     self-check) self_check ;;
     config) edit_config_interactive ;;
