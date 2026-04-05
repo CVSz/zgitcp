@@ -615,8 +615,43 @@ Commands:
   help                        Show this help
 
 Examples:
-  $0 --json release github --dry-run --artifact zip --name myproj.zip --paths "."
+  # Inspect repository state
+  $0 status
+
+  # Stage and commit selected files
+  $0 add "src/main.sh README.md"
+  $0 commit -m "feat: add release workflow docs"
+
+  # Synchronize with default REMOTE/BRANCH from config
+  $0 pull
+  $0 push
+
+  # Build an artifact from explicit paths
   $0 package --format tar --name myproj-v1.tar.gz --paths "src README.md"
+
+  # Create a GitHub release in dry-run mode with JSON output
+  $0 --json release github --dry-run --artifact zip --name myproj.zip --paths "."
+
+  # Bump version + generate changelog
+  $0 bump minor
+  $0 changelog
+
+  # Install required tooling
+  $0 install gh
+  $0 install tea
+  $0 install ssh
+
+  # Authenticate and run full setup (can skip auth for CI bootstrap)
+  $0 auth gh
+  $0 setup-all --remote origin --branch main --github-url https://github.com/user/repo.git
+  $0 setup-all --skip-auth --gitea-url http://localhost:3000/user/repo.git
+
+  # Clone a stack/source snapshot
+  $0 stack-source --source my-org --repos "repo-a repo-b" --output-dir ./stack --archive
+
+  # Run maintenance helpers
+  $0 autoheal
+  $0 self-check
 USAGE
 }
 
